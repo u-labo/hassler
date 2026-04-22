@@ -611,7 +611,7 @@ export default function App() {
   return (
     <div style={{ display:'flex', height:'100vh', overflow:'hidden', fontFamily:DISPLAY_FONT, background:'#f7f5ef' }}>
 
-      <div style={{ width:'320px', minWidth:'320px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      <div style={{ width:'360px', minWidth:'360px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
         <div style={{ padding:'18px 20px', borderBottom:bdr, background:'#fff' }}>
           <p style={{ fontSize:'9px', color:'#a89878', letterSpacing:'0.18em', margin:'0 0 4px', fontFamily:'monospace' }}>「問いのフィールド」作成ツール</p>
