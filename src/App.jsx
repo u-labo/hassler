@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 const CATEGORIES = [
   { q: '本当に？',           cat: '信憑性',     hint: '事実として本当に正しいか？' },
@@ -611,13 +611,13 @@ export default function App() {
   return (
     <div style={{ display:'flex', height:'100vh', overflow:'hidden', fontFamily:DISPLAY_FONT, background:'#f7f5ef' }}>
 
-      <div style={{ width:'290px', minWidth:'290px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      <div style={{ width:'320px', minWidth:'320px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
-        <div style={{ padding:'15px 18px', borderBottom:bdr, background:'#fff' }}>
+        <div style={{ padding:'18px 20px', borderBottom:bdr, background:'#fff' }}>
           <p style={{ fontSize:'9px', color:'#a89878', letterSpacing:'0.18em', margin:'0 0 4px', fontFamily:'monospace' }}>「問いのフィールド」作成ツール</p>
-          <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0, lineHeight:1.35 }}>
+          <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0, lineHeight:1.5 }}>
             ハスラーくん
-            <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'2px' }}>あなたもビリヤード法にレッツ・チャレンジ！</span>
+            <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'5px', lineHeight:1.6 }}>あなたもビリヤード法にレッツ・チャレンジ！</span>
           </h1>
         </div>
 
@@ -870,11 +870,11 @@ export default function App() {
       </div>
 
       {/* 右ペイン：折りたたみ可能 */}
-      <div style={{ width: rightOpen ? '220px' : '32px', minWidth: rightOpen ? '220px' : '32px', background:'#faf9f5', borderLeft:bdr, display:'flex', flexDirection:'column', overflow:'hidden', transition:'width 0.2s, min-width 0.2s' }}>
-        <div style={{ padding: rightOpen ? '13px 15px' : '13px 0', borderBottom:bdr, background:'#fff', display:'flex', alignItems:'center', justifyContent: rightOpen ? 'space-between' : 'center' }}>
+      <div style={{ width: rightOpen ? '260px' : '32px', minWidth: rightOpen ? '260px' : '32px', background:'#faf9f5', borderLeft:bdr, display:'flex', flexDirection:'column', overflow:'hidden', transition:'width 0.2s, min-width 0.2s' }}>
+        <div style={{ padding: rightOpen ? '13px 15px' : '13px 0', borderBottom:bdr, background:'#fff', display:'flex', alignItems:'center', justifyContent: rightOpen ? 'space-between' : 'center', gap:'8px' }}>
           {rightOpen && (
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <p style={{ fontSize:'12px', fontWeight:'700', color:'#1a1208', margin:0 }}>使い方</p>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:1, minWidth:0 }}>
+              <p style={{ fontSize:'12px', fontWeight:'700', color:'#1a1208', margin:0, whiteSpace:'nowrap' }}>使い方</p>
               <a href="https://u-labo.org/md/hassler_manual.html" target="_blank" rel="noreferrer"
                 style={{ fontSize:'10px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'5px', background:'#e6f4ff', padding:'2px 8px', textDecoration:'none', whiteSpace:'nowrap' }}>
                 マニュアル ↗
