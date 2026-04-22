@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 const CATEGORIES = [
   { q: '本当に？',           cat: '信憑性',     hint: '事実として本当に正しいか？' },
