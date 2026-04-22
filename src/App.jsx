@@ -467,7 +467,8 @@ export default function App() {
   const [orient, setOrient]       = useState('landscape');
   const [exporting, setExporting] = useState(null);
   const [importErr, setImportErr] = useState(null);
-  const fileInputRef = { current: null };
+  const fileInputRef = useRef(null);
+  const fileInputRef2 = useRef(null);
 
   const handleImport = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -668,7 +669,7 @@ export default function App() {
             <p style={{ fontSize:'10px', color:'#b0a890', margin:0 }}>Ctrl+Enter でも開始できます</p>
             <div style={{ borderTop:'1px solid #e8e4dc', paddingTop:'12px' }}>
               <p style={{ fontSize:'10px', color:'#7a7060', margin:'0 0 6px' }}>保存済みマップを読み込む</p>
-              <input ref={el=>fileInputRef.current=el} type="file" accept=".md,.txt"
+              <input ref={fileInputRef} type="file" accept=".md,.txt"
                 onChange={handleImport} style={{ display:'none' }}/>
               <button onClick={()=>fileInputRef.current?.click()}
                 style={{ width:'100%', background:'#fff', color:'#1a1208', border:bdr, borderRadius:'7px', padding:'9px', fontSize:'12px', cursor:'pointer', fontFamily:'inherit', fontWeight:'600' }}>
@@ -845,9 +846,9 @@ export default function App() {
                 <button onClick={doExportPNG} disabled={!!exporting} style={btnS(exporting==='png')}>{exporting==='png'?'処理中…':'PNG'}</button>
                 <button onClick={doExportMermaid} disabled={!!exporting} style={btnS(exporting==='md')}>{exporting==='md'?'処理中…':'Mermaid'}</button>
               </div>
-              <input ref={el=>fileInputRef.current=el} type="file" accept=".md,.txt"
+              <input ref={fileInputRef2} type="file" accept=".md,.txt"
                 onChange={handleImport} style={{ display:'none' }}/>
-              <button onClick={()=>fileInputRef.current?.click()}
+              <button onClick={()=>fileInputRef2.current?.click()}
                 style={{ width:'100%', background:'#fff', color:'#1677ff', border:'1px solid #91caff', borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit', fontWeight:'600', marginBottom:'5px' }}>
                 Mermaidを読み込む
               </button>
@@ -871,7 +872,15 @@ export default function App() {
       {/* 右ペイン：折りたたみ可能 */}
       <div style={{ width: rightOpen ? '220px' : '32px', minWidth: rightOpen ? '220px' : '32px', background:'#faf9f5', borderLeft:bdr, display:'flex', flexDirection:'column', overflow:'hidden', transition:'width 0.2s, min-width 0.2s' }}>
         <div style={{ padding: rightOpen ? '13px 15px' : '13px 0', borderBottom:bdr, background:'#fff', display:'flex', alignItems:'center', justifyContent: rightOpen ? 'space-between' : 'center' }}>
-          {rightOpen && <p style={{ fontSize:'12px', fontWeight:'700', color:'#1a1208', margin:0 }}>使い方</p>}
+          {rightOpen && (
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <p style={{ fontSize:'12px', fontWeight:'700', color:'#1a1208', margin:0 }}>使い方</p>
+              <a href="https://u-labo.org/md/hassler_manual.html" target="_blank" rel="noreferrer"
+                style={{ fontSize:'10px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'5px', background:'#e6f4ff', padding:'2px 8px', textDecoration:'none', whiteSpace:'nowrap' }}>
+                マニュアル ↗
+              </a>
+            </div>
+          )}
           <button onClick={()=>setRightOpen(v=>!v)}
             style={{ width:'22px', height:'22px', border:bdr, borderRadius:'4px', background:'#fff', cursor:'pointer', fontSize:'12px', color:'#7a7060', padding:0, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
             {rightOpen ? '›' : '‹'}
