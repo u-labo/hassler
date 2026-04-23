@@ -247,6 +247,65 @@ const buildMermaid = (root, orient = 'landscape') => {
   return ['```mermaid',`flowchart ${dir}`,...nodeLines,...edgeLines,...styleLines,'```'].join('\n');
 };
 
+// ── C案テーブル（Markdown）
+const buildTableMD = (root) => {
+  if (!root) return '';
+  const rows = [];
+  const walk = (n, parentQ = null) => {
+    const isAns = n.nodeType === 'answer';
+    const cat = isAns ? '—' : (n.category || '—');
+    const q = isAns ? '—' : n.text;
+    const a = isAns ? n.text : '—';
+    rows.push({ cat, q, a });
+    if (!n.collapsed) for (const c of n.children) walk(c, isAns ? parentQ : n.text);
+  };
+  walk(root);
+  const lines = [
+    '| カテゴリ | 問い | 答え |',
+    '|---|---|---|',
+    ...rows.map(r => `| ${r.cat} | ${r.q} | ${r.a} |`)
+  ];
+  return lines.join('\n');
+};
+
+// ── 樹形図テキスト
+const buildTreeText = (root) => {
+  if (!root) return '';
+  const lines = [];
+  const walk = (n, prefix = '', isLast = true) => {
+    const connector = prefix === '' ? '' : isLast ? '└── ' : '├── ';
+    const isAns = n.nodeType === 'answer';
+    const label = isAns
+      ? `答え: ${n.text}`
+      : (n.questionType ? `[${n.questionType}] ${n.text}` : n.text);
+    lines.push(prefix + connector + label);
+    if (!n.collapsed && n.children.length > 0) {
+      const childPrefix = prefix + (prefix === '' ? '' : isLast ? '    ' : '│   ');
+      n.children.forEach((c, i) => walk(c, childPrefix, i === n.children.length - 1));
+    }
+  };
+  walk(root);
+  return lines.join('\n');
+};
+
+// ── 表・樹形図をまとめてMD出力
+const buildSummaryMD = (root) => {
+  if (!root) return '';
+  return [
+    `# 問いのフィールド：${root.text}`,
+    '',
+    '## 樹形図',
+    '',
+    '```',
+    buildTreeText(root),
+    '```',
+    '',
+    '## 問いと答えの一覧（表）',
+    '',
+    buildTableMD(root),
+  ].join('\n');
+};
+
 const downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
@@ -590,6 +649,13 @@ export default function App() {
     downloadBlob(new Blob([str],{type:'text/markdown;charset=utf-8'}),'billiard_map.md');
     setTimeout(()=>setExporting(null),400);
   };
+  const doExportSummaryMD = () => {
+    const str = buildSummaryMD(root); if (!str) return;
+    setExporting('summary');
+    downloadBlob(new Blob([str],{type:'text/markdown;charset=utf-8'}),'billiard_summary.md');
+    setTimeout(()=>setExporting(null),400);
+  };
+  const doExportPrint = () => { window.print(); };
 
   const bdr = '1px solid #e0dbd0';
   const ZOOM_STEPS = [0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.25,1.5,1.75,2.0];
@@ -845,6 +911,10 @@ export default function App() {
                 <button onClick={doExportSVG} disabled={!!exporting} style={btnS(exporting==='svg')}>{exporting==='svg'?'処理中…':'SVG'}</button>
                 <button onClick={doExportPNG} disabled={!!exporting} style={btnS(exporting==='png')}>{exporting==='png'?'処理中…':'PNG'}</button>
                 <button onClick={doExportMermaid} disabled={!!exporting} style={btnS(exporting==='md')}>{exporting==='md'?'処理中…':'Mermaid'}</button>
+              </div>
+              <div style={{ display:'flex', gap:'5px', marginBottom:'5px' }}>
+                <button onClick={doExportSummaryMD} disabled={!!exporting} style={btnS(exporting==='summary')}>{exporting==='summary'?'処理中…':'表・樹形図 MD'}</button>
+                <button onClick={doExportPrint} disabled={!!exporting} style={btnS(false)}>印刷／PDF</button>
               </div>
               <input ref={fileInputRef2} type="file" accept=".md,.txt"
                 onChange={handleImport} style={{ display:'none' }}/>
