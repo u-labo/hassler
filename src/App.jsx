@@ -247,41 +247,43 @@ const buildMermaid = (root, orient = 'landscape') => {
   return ['```mermaid',`flowchart ${dir}`,...nodeLines,...edgeLines,...styleLines,'```'].join('\n');
 };
 
-// ── C案テーブル（Markdown）
+// ── C案テーブル（Markdown）- 深さ列追加
 const buildTableMD = (root) => {
   if (!root) return '';
   const rows = [];
-  const walk = (n, parentQ = null) => {
+  const walk = (n, depth = 0) => {
     const isAns = n.nodeType === 'answer';
-    const cat = isAns ? '—' : (n.category || '—');
-    const q = isAns ? '—' : n.text;
-    const a = isAns ? n.text : '—';
-    rows.push({ cat, q, a });
-    if (!n.collapsed) for (const c of n.children) walk(c, isAns ? parentQ : n.text);
+    const indent = '　'.repeat(depth);
+    const cat = isAns ? '答え' : (n.category || '—');
+    const text = indent + n.text;
+    rows.push({ depth, cat, text });
+    if (!n.collapsed) for (const c of n.children) walk(c, depth + 1);
   };
   walk(root);
   const lines = [
-    '| カテゴリ | 問い | 答え |',
+    '| 深さ | 種別 | テキスト |',
     '|---|---|---|',
-    ...rows.map(r => `| ${r.cat} | ${r.q} | ${r.a} |`)
+    ...rows.map(r => `| ${r.depth} | ${r.cat} | ${r.text} |`)
   ];
   return lines.join('\n');
 };
 
-// ── 樹形図テキスト
+// ── 樹形図テキスト（インデント修正版）
 const buildTreeText = (root) => {
   if (!root) return '';
   const lines = [];
-  const walk = (n, prefix = '', isLast = true) => {
-    const connector = prefix === '' ? '' : isLast ? '└── ' : '├── ';
+  const walk = (n, prefix = '', isRoot = true, isLast = true) => {
+    const connector = isRoot ? '' : isLast ? '└── ' : '├── ';
     const isAns = n.nodeType === 'answer';
     const label = isAns
       ? `答え: ${n.text}`
       : (n.questionType ? `[${n.questionType}] ${n.text}` : n.text);
     lines.push(prefix + connector + label);
     if (!n.collapsed && n.children.length > 0) {
-      const childPrefix = prefix + (prefix === '' ? '' : isLast ? '    ' : '│   ');
-      n.children.forEach((c, i) => walk(c, childPrefix, i === n.children.length - 1));
+      const childPrefix = isRoot ? '' : prefix + (isLast ? '    ' : '│   ');
+      n.children.forEach((c, i) =>
+        walk(c, childPrefix, false, i === n.children.length - 1)
+      );
     }
   };
   walk(root);
