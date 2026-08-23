@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const CATEGORIES = [
   { q: '本当に？',           cat: '信憑性',     hint: '事実として本当に正しいか？' },
@@ -219,7 +219,8 @@ const buildExportSVG = (root, fs, zoom, orient = 'landscape') => {
   };
   walk(root);
   const arrowDef = `<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#888"/></marker></defs>`;
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}">\n${arrowDef}\n<rect width="${svgW}" height="${svgH}" fill="#f7f5ef"/>\n<g transform="scale(${zoom})">\n${edgeParts.join('\n')}\n${nodeParts.join('\n')}\n</g>\n</svg>`;
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}">\n${arrowDef}\n<rect width="${svgW}" height="${svgH}" fill="#f7f5ef"/>\n<g transform="scale(${zoom})">\n${edgeParts.join('\n')}\n${nodeParts.join('\n')}\n</g>\n</svg>`;
+  return { svg, width: svgW, height: svgH };
 };
 
 const buildMermaid = (root, orient = 'landscape') => {
@@ -245,67 +246,6 @@ const buildMermaid = (root, orient = 'landscape') => {
   };
   walk(root);
   return ['```mermaid',`flowchart ${dir}`,...nodeLines,...edgeLines,...styleLines,'```'].join('\n');
-};
-
-// ── C案テーブル（Markdown）- 深さ列追加
-const buildTableMD = (root) => {
-  if (!root) return '';
-  const rows = [];
-  const walk = (n, depth = 0) => {
-    const isAns = n.nodeType === 'answer';
-    const indent = '　'.repeat(depth);
-    const cat = isAns ? '答え' : (n.category || '—');
-    const text = indent + n.text;
-    rows.push({ depth, cat, text });
-    if (!n.collapsed) for (const c of n.children) walk(c, depth + 1);
-  };
-  walk(root);
-  const lines = [
-    '| 深さ | 種別 | テキスト |',
-    '|---|---|---|',
-    ...rows.map(r => `| ${r.depth} | ${r.cat} | ${r.text} |`)
-  ];
-  return lines.join('\n');
-};
-
-// ── 樹形図テキスト（インデント修正版）
-const buildTreeText = (root) => {
-  if (!root) return '';
-  const lines = [];
-  const walk = (n, prefix = '', isRoot = true, isLast = true) => {
-    const connector = isRoot ? '' : isLast ? '└── ' : '├── ';
-    const isAns = n.nodeType === 'answer';
-    const label = isAns
-      ? `答え: ${n.text}`
-      : (n.questionType ? `[${n.questionType}] ${n.text}` : n.text);
-    lines.push(prefix + connector + label);
-    if (!n.collapsed && n.children.length > 0) {
-      const childPrefix = isRoot ? '' : prefix + (isLast ? '    ' : '│   ');
-      n.children.forEach((c, i) =>
-        walk(c, childPrefix, false, i === n.children.length - 1)
-      );
-    }
-  };
-  walk(root);
-  return lines.join('\n');
-};
-
-// ── 表・樹形図をまとめてMD出力
-const buildSummaryMD = (root) => {
-  if (!root) return '';
-  return [
-    `# 問いのフィールド：${root.text}`,
-    '',
-    '## 樹形図',
-    '',
-    '```',
-    buildTreeText(root),
-    '```',
-    '',
-    '## 問いと答えの一覧（表）',
-    '',
-    buildTableMD(root),
-  ].join('\n');
 };
 
 const downloadBlob = (blob, filename) => {
@@ -478,7 +418,7 @@ function Edge({ parent, child, pos, fs, orient }) {
   );
 }
 
-function MindMap({ root, selId, addingToId, fs, zoom, orient, onSelect, onOpenAdd, onCollapse, onDelete, svgRef }) {
+function MindMap({ root, selId, addingToId, fs, zoom, orient, onSelect, onOpenAdd, onCollapse, onDelete }) {
   const pos = orient === 'portrait' ? layoutTreePortrait(root, fs) : layoutTree(root, fs);
   const { w: nw, h: nh2 } = root ? getTreeBounds(pos, fs, orient) : { w:700, h:500 };
   const svgW = Math.round(nw*zoom), svgH = Math.round(nh2*zoom);
@@ -491,7 +431,7 @@ function MindMap({ root, selId, addingToId, fs, zoom, orient, onSelect, onOpenAd
   if (root) walk(root);
 
   return (
-    <svg ref={el => svgRef.current = el} width={svgW} height={svgH}
+    <svg width={svgW} height={svgH}
       style={{ display:'block', minWidth:'100%', minHeight:'100%', background:'#f7f5ef' }}>
       <defs>
         <pattern id="dots" x="0" y="0" width="28" height="28" patternUnits="userSpaceOnUse">
@@ -511,6 +451,92 @@ function MindMap({ root, selId, addingToId, fs, zoom, orient, onSelect, onOpenAd
       </g>
       {!root && <text x="50%" y="50%" textAnchor="middle" fontSize="15" fill="#bbb" fontFamily={DISPLAY_FONT}>左パネルにトピックを入力してください</text>}
     </svg>
+  );
+}
+
+// ── マニュアル（アプリ内蔵）
+function ManualModal({ onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const h2 = { fontSize:'13px', fontWeight:'700', color:'#1a1208', margin:'22px 0 8px', borderBottom:'2px solid #e0dbd0', paddingBottom:'5px' };
+  const p = { fontSize:'12px', color:'#3a3428', lineHeight:1.9, margin:'0 0 4px' };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(26,18,8,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}
+      onClick={onClose}>
+      <div style={{ background:'#faf9f5', width:'660px', maxWidth:'92vw', maxHeight:'86vh', borderRadius:'12px', boxShadow:'0 20px 60px rgba(0,0,0,0.3)', display:'flex', flexDirection:'column', overflow:'hidden', fontFamily:DISPLAY_FONT }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ padding:'15px 22px', borderBottom:'1px solid #e0dbd0', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+          <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0 }}>ハスラーくん マニュアル</h1>
+          <button onClick={onClose}
+            style={{ width:'28px', height:'28px', border:'1px solid #e0dbd0', borderRadius:'6px', background:'#fff', cursor:'pointer', fontSize:'13px', color:'#7a7060', fontFamily:'inherit' }}>
+            ✕
+          </button>
+        </div>
+
+        <div style={{ flex:1, overflowY:'auto', padding:'4px 24px 22px' }}>
+          <p style={h2}>ビリヤード法とは</p>
+          <p style={p}>
+            論文テーマに「本当に？」「なぜ？」「どういう意味？」など18種類の問いを次々とぶつけ、新しい問いを取り出していく思考法。
+            ビリヤードの玉が当たって新たな玉が動くように、問いが問いを生み、「問いのフィールド」を広げていく。
+          </p>
+          <p style={{ ...p, fontSize:'10.5px', color:'#a89878' }}>出典：戸田山和久（2022）『最新版 論文の教室』138頁</p>
+
+          <p style={h2}>基本の流れ</p>
+          <ol style={{ ...p, paddingLeft:'18px' }}>
+            <li>左パネルにテーマやキーワードを入力し「開始」(Ctrl+Enterでも可)</li>
+            <li>マップ上のノード右端の [+] をクリックして子ノードを追加</li>
+            <li>「問い」か「答え」かを選ぶ</li>
+            <li>「問い」を選んだ場合は、18種類のカテゴリからぶつける問いを1つ選ぶ</li>
+            <li>テキストを書いて「ノードに追加」(Ctrl+Enterでも可)</li>
+          </ol>
+          <p style={p}>矢印の意味：問い→問いは実線の矢印、答えにつながる線は点線で表示されます。</p>
+
+          <p style={h2}>ノードの操作</p>
+          <p style={p}>
+            ノードをクリックすると左パネルに詳細が表示されます。<br/>
+            <strong>[+]</strong> 子ノードを追加
+            <strong>[▼/▶]</strong> 折りたたみ／展開(子があるノードのみ)
+            <strong>[✕]</strong> ノードを削除(ルート以外。<u>確認なしで即削除</u>)<br/>
+            左パネルの<strong>「編集」</strong>でテキストを修正、問いノードならカテゴリの変更も可能(Ctrl+Enterで確定)。<br/>
+            <strong>「切り替え」</strong>でルート以外のノードの種別(問い⇔答え)を変更できます。
+          </p>
+
+          <p style={h2}>表示設定</p>
+          <p style={p}>
+            マップ作成中は左パネル上部で、<strong>文字サイズ</strong>(10〜18px)、
+            <strong>拡縮</strong>(30%〜200%、「等倍」ボタンで100%に戻せます)、
+            <strong>向き</strong>(↔横 / ↕縦)を調整できます。
+          </p>
+
+          <p style={h2}>書き出し・読み込み</p>
+          <p style={p}>
+            <strong>PNG</strong>：現在のマップ全体を画像として保存します(ダウンロードフォルダに billiard_map.png として保存されます)。<br/>
+            <strong>Mermaid</strong>：マップ構造をMermaid記法のテキストとして保存します(ダウンロードフォルダに billiard_map.md として保存されます)。<br/>
+            <strong>「Mermaidを読み込む」</strong>：<u>ハスラーくんで書き出したMermaidファイル(.md/.txt)専用</u>です。
+            他のツールで書いた一般的なMermaid図は、ノードや矢印の記法が異なるため読み込めません。<br/>
+            <strong>リセット</strong>：マップを消去して最初の入力画面に戻ります(<u>確認なしで即実行</u>されます)。
+          </p>
+          <p style={{ ...p, marginTop:'10px', padding:'10px 12px', background:'#fff0f0', border:'1px solid #f0c0c0', borderRadius:'7px', color:'#8a2020' }}>
+            ⚠ 自動保存はありません。作業内容を残したい場合は、ページを閉じる前に必ずPNGまたはMermaidで書き出してください。
+          </p>
+
+          <p style={h2}>18種類の問い</p>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'3px 16px' }}>
+            {CATEGORIES.map(c => (
+              <div key={c.q} style={{ fontSize:'11px', lineHeight:1.8, color:'#3a3428' }}>
+                <strong style={{ color:'#1a1208' }}>{c.q}</strong>
+                <span style={{ color:'#a89878' }}>［{c.cat}］</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -546,7 +572,7 @@ export default function App() {
     e.target.value = '';
   };
   const [rightOpen, setRightOpen] = useState(true);
-  const svgRef = { current: null };
+  const [manualOpen, setManualOpen] = useState(false);
 
   const selNode = selId ? findNode(root, selId) : null;
   const addingNode = addingToId ? findNode(root, addingToId) : null;
@@ -616,20 +642,12 @@ export default function App() {
   };
   const handleCancelAdd = () => { setAddingToId(null); setSelCat(null); setInputText(''); setNewNodeType('question'); };
 
-  const doExportSVG = () => {
-    const str = buildExportSVG(root, fontSize, zoom, orient); if (!str) return;
-    setExporting('svg');
-    downloadBlob(new Blob([str],{type:'image/svg+xml;charset=utf-8'}),'billiard_map.svg');
-    setTimeout(()=>setExporting(null),400);
-  };
   const doExportPNG = () => {
-    const str = buildExportSVG(root, fontSize, zoom, orient); if (!str) return;
+    const built = buildExportSVG(root, fontSize, zoom, orient); if (!built) return;
+    const { svg: str, width: W, height: H } = built;
     setExporting('png');
     setTimeout(() => {
       try {
-        const svgEl = svgRef.current;
-        const W = Math.round(Number(svgEl?.getAttribute('width'))||800);
-        const H = Math.round(Number(svgEl?.getAttribute('height'))||600);
         const scale = Math.min(2, 4000/Math.max(W,H,1));
         const canvas = document.createElement('canvas');
         canvas.width=Math.round(W*scale); canvas.height=Math.round(H*scale);
@@ -651,13 +669,6 @@ export default function App() {
     downloadBlob(new Blob([str],{type:'text/markdown;charset=utf-8'}),'billiard_map.md');
     setTimeout(()=>setExporting(null),400);
   };
-  const doExportSummaryMD = () => {
-    const str = buildSummaryMD(root); if (!str) return;
-    setExporting('summary');
-    downloadBlob(new Blob([str],{type:'text/markdown;charset=utf-8'}),'billiard_summary.md');
-    setTimeout(()=>setExporting(null),400);
-  };
-  const doExportPrint = () => { window.print(); };
 
   const bdr = '1px solid #e0dbd0';
   const ZOOM_STEPS = [0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.25,1.5,1.75,2.0];
@@ -677,6 +688,7 @@ export default function App() {
   );
 
   return (
+    <>
     <div style={{ display:'flex', height:'100vh', overflow:'hidden', fontFamily:DISPLAY_FONT, background:'#f7f5ef' }}>
 
       <div style={{ width:'360px', minWidth:'360px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
@@ -910,13 +922,8 @@ export default function App() {
             <div style={{ padding:'10px 13px', borderTop:bdr, background:'#faf9f5' }}>
               <p style={{ fontSize:'9.5px', color:'#a89878', margin:'0 0 6px', fontFamily:'monospace', letterSpacing:'0.1em' }}>書き出し・読み込み</p>
               <div style={{ display:'flex', gap:'5px', marginBottom:'5px' }}>
-                <button onClick={doExportSVG} disabled={!!exporting} style={btnS(exporting==='svg')}>{exporting==='svg'?'処理中…':'SVG'}</button>
                 <button onClick={doExportPNG} disabled={!!exporting} style={btnS(exporting==='png')}>{exporting==='png'?'処理中…':'PNG'}</button>
                 <button onClick={doExportMermaid} disabled={!!exporting} style={btnS(exporting==='md')}>{exporting==='md'?'処理中…':'Mermaid'}</button>
-              </div>
-              <div style={{ display:'flex', gap:'5px', marginBottom:'5px' }}>
-                <button onClick={doExportSummaryMD} disabled={!!exporting} style={btnS(exporting==='summary')}>{exporting==='summary'?'処理中…':'表・樹形図 MD'}</button>
-                <button onClick={doExportPrint} disabled={!!exporting} style={btnS(false)}>印刷／PDF</button>
               </div>
               <input ref={fileInputRef2} type="file" accept=".md,.txt"
                 onChange={handleImport} style={{ display:'none' }}/>
@@ -937,8 +944,7 @@ export default function App() {
       <div style={{ flex:1, overflow:'auto' }}>
         <MindMap root={root} selId={selId} addingToId={addingToId}
           fs={fontSize} zoom={zoom} orient={orient}
-          onSelect={handleSelect} onOpenAdd={handleOpenAdd} onCollapse={handleCollapse} onDelete={handleDelete}
-          svgRef={svgRef}/>
+          onSelect={handleSelect} onOpenAdd={handleOpenAdd} onCollapse={handleCollapse} onDelete={handleDelete}/>
       </div>
 
       {/* 右ペイン：折りたたみ可能 */}
@@ -947,10 +953,10 @@ export default function App() {
           {rightOpen && (
             <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:1, minWidth:0 }}>
               <p style={{ fontSize:'12px', fontWeight:'700', color:'#1a1208', margin:0, whiteSpace:'nowrap' }}>使い方</p>
-              <a href="https://u-labo.org/md/hassler_manual.html" target="_blank" rel="noreferrer"
-                style={{ fontSize:'10px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'5px', background:'#e6f4ff', padding:'2px 8px', textDecoration:'none', whiteSpace:'nowrap' }}>
-                マニュアル ↗
-              </a>
+              <button onClick={() => setManualOpen(true)}
+                style={{ fontSize:'10px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'5px', background:'#e6f4ff', padding:'2px 8px', cursor:'pointer', fontFamily:'inherit', whiteSpace:'nowrap' }}>
+                マニュアル
+              </button>
             </div>
           )}
           <button onClick={()=>setRightOpen(v=>!v)}
@@ -986,5 +992,7 @@ export default function App() {
         )}
       </div>
     </div>
+    {manualOpen && <ManualModal onClose={() => setManualOpen(false)} />}
+    </>
   );
 }
