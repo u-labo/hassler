@@ -180,7 +180,7 @@ const layoutFor = (doc, fs, orient) => {
 };
 // 波かっこのラベルは端の列・段の外にはみ出すので、その分キャンバスを広げる
 const mapBounds = (doc, pos, fs, orient) => {
-  const b = getTreeBounds(pos, fs, orient);
+  const b = getTreeBounds(pos, fs);
   if (!doc.groups.length) return b;
   return orient === 'portrait' ? { w: b.w, h: b.h + 90 } : { w: b.w + 130, h: b.h };
 };
@@ -218,7 +218,7 @@ const layoutTreePortrait = (root, fs, pvg = PVG) => {
   return pos;
 };
 
-const getTreeBounds = (pos, fs, orient = 'landscape') => {
+const getTreeBounds = (pos, fs) => {
   const nh = nodeH(fs); let maxX = NW, maxY = nh;
   for (const [, { x, y }] of pos) { maxX = Math.max(maxX, x + NW); maxY = Math.max(maxY, y + nh); }
   return { w: maxX + CANVAS_PAD * 2, h: maxY + CANVAS_PAD * 2 };
@@ -1505,7 +1505,6 @@ export default function App() {
                         <p style={{ fontSize:'10px', color:'#7a7060', margin:'0 0 5px', fontWeight:'600' }}>問いの種類</p>
                         <div style={{ display:'flex', flexDirection:'column', gap:'3px', marginBottom:'10px', maxHeight:'160px', overflowY:'auto', border:bdr, borderRadius:'6px', padding:'4px' }}>
                           {CATEGORIES.map(c => {
-                            const active = editText !== undefined && (selNode.questionType === c.q);
                             const isSel2 = editCat ? editCat.q === c.q : selNode.questionType === c.q;
                             return (
                               <button key={c.q} onClick={()=>setEditCat(c)}
@@ -1639,8 +1638,8 @@ export default function App() {
                 <span style={{ color:'#888' }}>波かっこ</span> 親を選んで「＋子ノードをまとめる」<br/>
                 <span style={{ display:'block', marginTop:'6px', paddingTop:'6px', borderTop:'1px solid #e8d070' }}>
                   <span style={{ color:'#888' }}>編集</span> テキストを修正<br/>
-                  　問いノードは種類も変更可<br/>
-                  　Ctrl+Enter で確定
+                  {'\u3000'}問いノードは種類も変更可<br/>
+                  {'\u3000'}Ctrl+Enter で確定
                 </span>
               </div>
             </div>
