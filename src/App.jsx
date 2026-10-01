@@ -502,7 +502,7 @@ function ManualModal({ onClose }) {
       <div style={{ background:'#faf9f5', width:'660px', maxWidth:'92vw', maxHeight:'86vh', borderRadius:'12px', boxShadow:'0 20px 60px rgba(0,0,0,0.3)', display:'flex', flexDirection:'column', overflow:'hidden', fontFamily:DISPLAY_FONT }}
         onClick={e => e.stopPropagation()}>
         <div style={{ padding:'15px 22px', borderBottom:'1px solid #e0dbd0', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
-          <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0 }}>ハスラーくん マニュアル</h1>
+          <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0 }}>ハスラーくん（簡易版）マニュアル</h1>
           <button onClick={onClose}
             style={{ width:'28px', height:'28px', border:'1px solid #e0dbd0', borderRadius:'6px', background:'#fff', cursor:'pointer', fontSize:'13px', color:'#7a7060', fontFamily:'inherit' }}>
             ✕
@@ -510,6 +510,11 @@ function ManualModal({ onClose }) {
         </div>
 
         <div style={{ flex:1, overflowY:'auto', padding:'4px 24px 22px' }}>
+          <p style={{ ...p, padding:'8px 12px', background:'#f0f5ff', border:'1px solid #adc6ff', borderRadius:'7px', color:'#1d39c4', margin:'14px 0 0' }}>
+            このマニュアルは<strong>「簡易版」</strong>のものです。関係線・波かっこ・元に戻すなどが使える<strong>「プロ版」</strong>は
+            <a href="https://hassler-pro.u-labo.org/" style={{ color:'#1677ff' }}>こちら</a>です。
+          </p>
+
           <p style={h2}>ビリヤード法とは</p>
           <p style={p}>
             論文テーマに「本当に？」「なぜ？」「どういう意味？」など18種類の問いを次々とぶつけ、新しい問いを取り出していく思考法。
