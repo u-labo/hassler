@@ -69,6 +69,31 @@ const vgap = (fs) => Math.round(fs * 1.0 + 8);
 let _id = 0;
 const uid = () => `n${++_id}`;
 
+// ── 自動保存（このブラウザの localStorage にだけ保存。外部には送信しない）
+const STORAGE_KEY = 'hassler.autosave.v1';
+const isTree = (n) => !!n?.id && Array.isArray(n.children);
+const loadSaved = () => {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (!isTree(data?.root)) return null;
+    // 復元したノードIDと新規ノードIDが衝突しないよう、採番カウンタを最大値まで進める
+    const walk = n => {
+      const m = /^n(\d+)$/.exec(n.id);
+      if (m) _id = Math.max(_id, Number(m[1]));
+      n.children.forEach(walk);
+    };
+    walk(data.root);
+    return data;
+  } catch { return null; }
+};
+const writeSaved = (data) => {
+  try {
+    if (data) localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch { /* 容量超過・プライベートモード等では保存しない */ }
+};
+const SAVED = loadSaved();
+
 const mkNode = (text, opts = {}) => ({
   id: uid(), text,
   nodeType: opts.nodeType ?? 'question',   // 'question' | 'answer'
@@ -525,10 +550,17 @@ function ManualModal({ onClose }) {
             <strong>Mermaid</strong>：マップ構造をMermaid記法のテキストとして保存します(ダウンロードフォルダに billiard_map.md として保存されます)。<br/>
             <strong>「Mermaidを読み込む」</strong>：<u>ハスラーくんで書き出したMermaidファイル(.md/.txt)専用</u>です。
             他のツールで書いた一般的なMermaid図は、ノードや矢印の記法が異なるため読み込めません。<br/>
-            <strong>リセット</strong>：マップを消去して最初の入力画面に戻ります(<u>確認なしで即実行</u>されます)。
+            <strong>リセット</strong>：マップを消去して最初の入力画面に戻ります(確認のあとで実行されます。<u>自動保存した内容も消えます</u>)。
+          </p>
+
+          <p style={h2}>自動保存</p>
+          <p style={p}>
+            作業内容(マップと文字サイズ・拡縮・向き)は、<strong>このブラウザの中に自動で保存</strong>されます。
+            ページを再読み込みしたり、タブを閉じて開き直したりしても、続きから作業できます。保存した内容が外部に送信されることはありません。
           </p>
           <p style={{ ...p, marginTop:'10px', padding:'10px 12px', background:'#fff0f0', border:'1px solid #f0c0c0', borderRadius:'7px', color:'#8a2020' }}>
-            ⚠ 自動保存はありません。作業内容を残したい場合は、ページを閉じる前に必ずPNGまたはMermaidで書き出してください。
+            ⚠ 自動保存はあくまで「うっかり」への保険です。別の端末・別のブラウザには引き継がれず、ブラウザの閲覧データを消したり、ゲストモードを終了したりすると消えます。
+            作業内容を確実に残したい場合は、PNGまたはMermaidで書き出してください。
           </p>
 
           <p style={h2}>18種類の問い</p>
@@ -547,17 +579,23 @@ function ManualModal({ onClose }) {
 }
 
 export default function App() {
-  const [phase, setPhase]         = useState('input');
+  const [phase, setPhase]         = useState(SAVED ? 'mapping' : 'input');
   const [input, setInput]         = useState('');
-  const [root, setRoot]           = useState(null);
+  const [root, setRoot]           = useState(SAVED?.root ?? null);
   const [selId, setSelId]         = useState(null);
   const [addingToId, setAddingToId] = useState(null);
   const [selCat, setSelCat]       = useState(null);
   const [newNodeType, setNewNodeType] = useState('question');
   const [inputText, setInputText] = useState('');
-  const [fontSize, setFontSize]   = useState(13);
-  const [zoom, setZoom]           = useState(1.0);
-  const [orient, setOrient]       = useState('landscape');
+  const [fontSize, setFontSize]   = useState(SAVED?.fontSize ?? 13);
+  const [zoom, setZoom]           = useState(SAVED?.zoom ?? 1.0);
+  const [orient, setOrient]       = useState(SAVED?.orient ?? 'landscape');
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  // マップや表示設定が変わるたびに自動保存（root が null ＝リセット後は保存データも消す）
+  useEffect(() => {
+    writeSaved(root ? { root, fontSize, zoom, orient } : null);
+  }, [root, fontSize, zoom, orient]);
   const [exporting, setExporting] = useState(null);
   const [importErr, setImportErr] = useState(null);
   const fileInputRef = useRef(null);
@@ -941,10 +979,28 @@ export default function App() {
                 Mermaidを読み込む
               </button>
               {importErr && <p style={{ fontSize:'10px', color:'#c41a1a', margin:'0 0 5px', lineHeight:1.6 }}>{importErr}</p>}
-              <button onClick={()=>{ setPhase('input'); setRoot(null); setSelId(null); setAddingToId(null); setSelCat(null); setInputText(''); setZoom(1.0); }}
-                style={{ width:'100%', background:'#fff', color:'#7a7060', border:bdr, borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit' }}>
-                リセット
-              </button>
+              {confirmReset ? (
+                <div style={{ padding:'8px 10px', background:'#fff0f0', border:'1px solid #f0c0c0', borderRadius:'6px' }}>
+                  <p style={{ fontSize:'10.5px', color:'#8a2020', margin:'0 0 7px', lineHeight:1.7 }}>
+                    マップを消去して最初に戻します。自動保存した内容も消えます。よろしいですか？
+                  </p>
+                  <div style={{ display:'flex', gap:'5px' }}>
+                    <button onClick={()=>{ setPhase('input'); setRoot(null); setSelId(null); setAddingToId(null); setSelCat(null); setInputText(''); setZoom(1.0); setConfirmReset(false); }}
+                      style={{ flex:1, background:'#c41a1a', color:'#fff', border:'none', borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit', fontWeight:'700' }}>
+                      リセットする
+                    </button>
+                    <button onClick={()=>setConfirmReset(false)}
+                      style={{ flex:1, background:'#fff', color:'#7a7060', border:bdr, borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit' }}>
+                      やめる
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={()=>setConfirmReset(true)}
+                  style={{ width:'100%', background:'#fff', color:'#7a7060', border:bdr, borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit' }}>
+                  リセット
+                </button>
+              )}
             </div>
           </>
         )}
