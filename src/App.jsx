@@ -145,7 +145,8 @@ const getTreeBounds = (pos, fs, orient = 'landscape') => {
 
 const getNodeCol = (node) => node.nodeType === 'answer' ? ACOL : QCOLS[node.depth % QCOLS.length];
 
-const calcLayout = (node, fs, font) => {
+// reserveR: 右端にボタン列がある場合（画面表示のみ）、その幅だけ本文の折り返し幅を狭める
+const calcLayout = (node, fs, font, reserveR = 0) => {
   const badgeFs = Math.max(9, fs - 3);
   const lineH = fs + 7;
   const nh = nodeH(fs);
@@ -155,7 +156,7 @@ const calcLayout = (node, fs, font) => {
   const badgeText = isAnswer ? '答え' : (node.questionType ? `${node.questionType}｜${node.category}` : '');
   const badgeH = hasBadge ? badgeFs + 9 : 0;
   const badgeGap = hasBadge ? 10 : 0;
-  const lines = wrapMeasured(node.text, NW - 22, fs, font);
+  const lines = wrapMeasured(node.text, NW - 22 - reserveR, fs, font);
   const textBlockH = lines.length * lineH;
   const contentH = badgeH + badgeGap + textBlockH;
   const startY = (nh - contentH) / 2;
@@ -321,14 +322,19 @@ function NodeBox({ node, pos, fs, selId, addingToId, onSelect, onOpenAdd, onColl
   const isSel = node.id === selId;
   const isAdding = node.id === addingToId;
   const isAnswer = node.nodeType === 'answer';
-  const { badgeFs, lineH, lines, hasBadge, badgeText, badgeY, textY0 } = calcLayout(node, fs, DISPLAY_FONT);
   const btnSz = Math.round(fs * 1.45 + 3);
   const hasChildren = node.children.length > 0;
+  const hasDelete = node.depth > 0;
 
-  // ボタン配置：右端から [+] 、その左に [▼/▶]（子ありの場合のみ）
-  const addBtnX = NW - btnSz - 7;
-  const colBtnX = hasChildren ? addBtnX - btnSz - 4 : null;
-  const btnY = nh / 2 - btnSz / 2;
+  // ボタン配置：右端に縦一列で [+]（下に「追加」ラベル）→ [▼/▶]（子ありのみ）→ [✕]（深さ1以上）
+  // 本文はボタン列の手前で折り返すので、ボタンと文章が重ならない
+  const btnX = NW - btnSz - 7;
+  const LABEL_H = 14, BTN_GAP = 4;
+  const stackH = btnSz + LABEL_H + (hasChildren ? BTN_GAP + btnSz : 0) + (hasDelete ? BTN_GAP + btnSz : 0);
+  const addBtnY = (nh - stackH) / 2;
+  const colBtnY = addBtnY + btnSz + LABEL_H + BTN_GAP;
+  const delBtnY = hasChildren ? colBtnY + btnSz + BTN_GAP : colBtnY;
+  const { badgeFs, lineH, lines, hasBadge, badgeText, badgeY, textY0 } = calcLayout(node, fs, DISPLAY_FONT, btnSz + 4);
 
   return (
     <g transform={`translate(${p.x + CANVAS_PAD},${p.y + CANVAS_PAD})`}>
@@ -350,7 +356,7 @@ function NodeBox({ node, pos, fs, selId, addingToId, onSelect, onOpenAdd, onColl
       ))}
 
       {/* [+] 追加ボタン（常に表示） */}
-      <g transform={`translate(${addBtnX},${btnY})`} style={{ cursor:'pointer' }}
+      <g transform={`translate(${btnX},${addBtnY})`} style={{ cursor:'pointer' }}
         onClick={e => { e.stopPropagation(); onOpenAdd(node.id); }}>
         <rect width={btnSz} height={btnSz} rx="5" fill={isAdding ? col.badge : col.border}/>
         <text x={btnSz/2} y={btnSz*0.82} textAnchor="middle"
@@ -362,8 +368,8 @@ function NodeBox({ node, pos, fs, selId, addingToId, onSelect, onOpenAdd, onColl
       </g>
 
       {/* [▼/▶] 折りたたみボタン（子ありの場合のみ） */}
-      {hasChildren && colBtnX !== null && (
-        <g transform={`translate(${colBtnX},${btnY})`} style={{ cursor:'pointer' }}
+      {hasChildren && (
+        <g transform={`translate(${btnX},${colBtnY})`} style={{ cursor:'pointer' }}
           onClick={e => { e.stopPropagation(); onCollapse(node.id); }}>
           <rect width={btnSz} height={btnSz} rx="5" fill="#e8e4dc" stroke="#c8c0b0" strokeWidth="1"/>
           <text x={btnSz/2} y={btnSz*0.75} textAnchor="middle"
@@ -375,8 +381,8 @@ function NodeBox({ node, pos, fs, selId, addingToId, onSelect, onOpenAdd, onColl
       )}
 
       {/* 削除ボタン（深さ1以上） */}
-      {node.depth > 0 && (
-        <g transform={`translate(${(hasChildren ? colBtnX : addBtnX) - btnSz - 4},${btnY})`}
+      {hasDelete && (
+        <g transform={`translate(${btnX},${delBtnY})`}
           style={{ cursor:'pointer' }}
           onClick={e => { e.stopPropagation(); onDelete(node.id); }}>
           <rect width={btnSz} height={btnSz} rx="5" fill="#f5f5f0" stroke="#ddd" strokeWidth="1"/>
@@ -691,16 +697,16 @@ export default function App() {
     <>
     <div style={{ display:'flex', height:'100vh', overflow:'hidden', fontFamily:DISPLAY_FONT, background:'#f7f5ef' }}>
 
-      <div style={{ width:'360px', minWidth:'360px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      <div style={{ width:'250px', minWidth:'250px', background:'#faf9f5', borderRight:bdr, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
         <div style={{ padding:'18px 20px', borderBottom:bdr, background:'#fff' }}>
           <p style={{ fontSize:'9px', color:'#a89878', letterSpacing:'0.18em', margin:'0 0 4px', fontFamily:'monospace' }}>「問いのフィールド」作成ツール</p>
           <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0, lineHeight:1.5 }}>
             ハスラーくん
-            <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'5px', lineHeight:1.6 }}>あなたもビリヤード法にレッツ・チャレンジ！</span>
+            <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'5px', lineHeight:1.6 }}>ビリヤード法にレッツ・チャレンジ！</span>
           </h1>
           <a href="https://hassler-pro.u-labo.org/" style={{ display:'inline-block', marginTop:'8px', fontSize:'10.5px', color:'#1677ff', textDecoration:'none' }}>
-            多機能版（関係線・波かっこ・自動保存）はこちら →
+            多機能版
           </a>
         </div>
 
