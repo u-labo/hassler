@@ -1190,7 +1190,7 @@ export default function App() {
         <div style={{ padding:'18px 20px', borderBottom:bdr, background:'#fff' }}>
           <p style={{ fontSize:'9px', color:'#a89878', letterSpacing:'0.18em', margin:'0 0 4px', fontFamily:'monospace' }}>「問いのフィールド」作成ツール</p>
           <h1 style={{ fontSize:'15px', fontWeight:'700', color:'#1a1208', margin:0, lineHeight:1.5 }}>
-            ハスラーくん
+            ハスラーくん（プロ版）
             <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'5px', lineHeight:1.6 }}>ビリヤード法にレッツ・チャレンジ！</span>
           </h1>
           <a href="https://hassler.u-labo.org/" style={{ display:'inline-block', marginTop:'8px', fontSize:'10.5px', color:'#1677ff', textDecoration:'none' }}>
