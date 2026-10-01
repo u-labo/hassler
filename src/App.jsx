@@ -1193,6 +1193,9 @@ export default function App() {
             ハスラーくん
             <span style={{ display:'block', fontSize:'11px', fontWeight:'400', color:'#7a7060', marginTop:'5px', lineHeight:1.6 }}>ビリヤード法にレッツ・チャレンジ！</span>
           </h1>
+          <a href="https://hassler.u-labo.org/" style={{ display:'inline-block', marginTop:'8px', fontSize:'10.5px', color:'#1677ff', textDecoration:'none' }}>
+            ← 簡易版はこちら
+          </a>
         </div>
 
         {phase==='mapping' && (
