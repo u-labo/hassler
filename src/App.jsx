@@ -74,11 +74,16 @@ const STORAGE_KEY = 'hassler.autosave.v1';
 const HISTORY_MAX = 10; // 元に戻せる回数（再読み込み後も同じだけ残る）
 const isTree = (n) => !!n?.id && Array.isArray(n.children);
 const isLink = (l) => !!l?.id && !!l.from && !!l.to;
-// マップ（doc）＝ 木（root）＋ 関係線（links）。古い保存データ（木だけ）もここで doc に揃える
-const EMPTY_DOC = { root: null, links: [] };
+const isGroup = (g) => !!g?.id && !!g.parentId && Array.isArray(g.childIds);
+// マップ（doc）＝ 木（root）＋ 関係線（links）＋ 波かっこ（groups）。古い保存データ（木だけ等）もここで doc に揃える
+const EMPTY_DOC = { root: null, links: [], groups: [] };
 const toDoc = (x) => {
-  if (isTree(x)) return { root: x, links: [] };
-  if (isTree(x?.root)) return { root: x.root, links: (Array.isArray(x.links) ? x.links : []).filter(isLink) };
+  if (isTree(x)) return { root: x, links: [], groups: [] };
+  if (isTree(x?.root)) return {
+    root: x.root,
+    links:  (Array.isArray(x.links)  ? x.links  : []).filter(isLink),
+    groups: (Array.isArray(x.groups) ? x.groups : []).filter(isGroup),
+  };
   return null;
 };
 const loadSaved = () => {
@@ -91,7 +96,7 @@ const loadSaved = () => {
     // （「元に戻す」「やり直す」で履歴中のノードや関係線が戻ってくるので、履歴も含めて走査する）
     const bump = id => { const m = /^n(\d+)$/.exec(id); if (m) _id = Math.max(_id, Number(m[1])); };
     const walk = n => { bump(n.id); n.children.forEach(walk); };
-    for (const d of [doc, ...past, ...future]) { walk(d.root); d.links.forEach(l => bump(l.id)); }
+    for (const d of [doc, ...past, ...future]) { walk(d.root); d.links.forEach(l => bump(l.id)); d.groups.forEach(g => bump(g.id)); }
     return { ...data, ...doc, past, future };
   } catch { return null; }
 };
@@ -138,28 +143,46 @@ const toggleNodeType = (root, id) => {
     : { ...n, children: n.children.map(clone) };
   return clone(root);
 };
+const findParent = (root, id) => {
+  if (!root) return null;
+  if (root.children.some(c => c.id === id)) return root;
+  for (const c of root.children) { const f = findParent(c, id); if (f) return f; }
+  return null;
+};
 const isParentChild = (root, a, b) =>
   !!findNode(root, a)?.children.some(c => c.id === b) || !!findNode(root, b)?.children.some(c => c.id === a);
-// 消えたノードにつながる関係線を取り除く
-const pruneLinks = (doc) => {
-  if (!doc.root) return { ...doc, links: [] };
+// 消えたノードにつながる関係線・波かっこを片付ける（波かっこは消えた子を外し、空になったら消す）
+const pruneDoc = (doc) => {
+  if (!doc.root) return { ...doc, links: [], groups: [] };
   const ids = new Set();
   const walk = n => { ids.add(n.id); n.children.forEach(walk); };
   walk(doc.root);
   const links = doc.links.filter(l => ids.has(l.from) && ids.has(l.to));
-  return links.length === doc.links.length ? doc : { ...doc, links };
+  const groups = doc.groups
+    .map(g => g.childIds.every(id => ids.has(id)) ? g : { ...g, childIds: g.childIds.filter(id => ids.has(id)) })
+    .filter(g => ids.has(g.parentId) && g.childIds.length);
+  const same = links.length === doc.links.length && groups.length === doc.groups.length && groups.every((g, i) => g === doc.groups[i]);
+  return same ? doc : { ...doc, links, groups };
 };
 const countLeaves = (n) =>(!n.children.length || n.collapsed) ? 1 : n.children.reduce((s, c) => s + countLeaves(c), 0);
 
-// 関係線や線のラベルがあるマップは、ラベルを置けるよう深さ方向のすきまを広げる
-const hasLineDecor = (root, links) => {
-  if (links.length) return true;
+// 関係線・線のラベル・波かっこがあるマップは、ラベルを置けるよう深さ方向のすきまを広げる
+const hasLineDecor = ({ root, links, groups }) => {
+  if (links.length || groups.length) return true;
   const walk = n => !!n.edgeLabel || n.children.some(walk);
   return !!root && walk(root);
 };
-const layoutFor = (root, links, fs, orient) => {
-  const wide = hasLineDecor(root, links);
-  return orient === 'portrait' ? layoutTreePortrait(root, fs, wide ? 84 : PVG) : layoutTree(root, fs, wide ? 150 : HG);
+const layoutFor = (doc, fs, orient) => {
+  const wide = hasLineDecor(doc);
+  return orient === 'portrait'
+    ? layoutTreePortrait(doc.root, fs, !wide ? PVG : doc.groups.length ? 120 : 84)
+    : layoutTree(doc.root, fs, wide ? 150 : HG);
+};
+// 波かっこのラベルは端の列・段の外にはみ出すので、その分キャンバスを広げる
+const mapBounds = (doc, pos, fs, orient) => {
+  const b = getTreeBounds(pos, fs, orient);
+  if (!doc.groups.length) return b;
+  return orient === 'portrait' ? { w: b.w, h: b.h + 90 } : { w: b.w + 130, h: b.h };
 };
 
 // ランドスケープ（左→右）
@@ -308,12 +331,48 @@ const labelSVG = (text, mid, fs, stroke, color) => {
     + `<text x="${mid[0].toFixed(1)}" y="${(mid[1]+lfs*0.36).toFixed(1)}" text-anchor="middle" font-size="${lfs}" fill="${color}" font-family="${EXPORT_FONT}">${escXML(t)}</text></g>`;
 };
 
+// ── 波かっこ：同じ親の子ノードの並び（childIds）の外側に付ける。横向きは右側、縦向きは下側
+const GROUP_COL = '#8a7a5a';
+const groupGeom = (group, pos, nh, fs, orient, font) => {
+  const ps = group.childIds.map(id => pos.get(id)).filter(Boolean);
+  if (!ps.length) return null;
+  const w = 12, h = w / 2, off = 10;
+  const lfs = Math.max(9, fs - 1), lineH = lfs + 4;
+  if (orient === 'portrait') {
+    const x1 = Math.min(...ps.map(p => p.x)) + CANVAS_PAD + 6, x2 = Math.max(...ps.map(p => p.x)) + CANVAS_PAD + NW - 6;
+    const y0 = Math.max(...ps.map(p => p.y)) + CANVAS_PAD + nh + off, xm = (x1 + x2) / 2, r = Math.min(10, (x2 - x1) / 4);
+    const lines = group.label ? wrapMeasured(group.label, 220, lfs, font) : [];
+    return {
+      d: `M${x1},${y0}Q${x1},${y0+h} ${x1+r},${y0+h}L${xm-r},${y0+h}Q${xm},${y0+h} ${xm},${y0+w}Q${xm},${y0+h} ${xm+r},${y0+h}L${x2-r},${y0+h}Q${x2},${y0+h} ${x2},${y0}`,
+      lfs, anchor: 'middle',
+      texts: lines.map((t, i) => ({ t, x: xm, y: y0 + w + 4 + lfs + i * lineH })),
+      hit: { x: x1, y: y0 - 2, w: x2 - x1, h: w + 8 + lines.length * lineH },
+    };
+  }
+  const y1 = Math.min(...ps.map(p => p.y)) + CANVAS_PAD + 6, y2 = Math.max(...ps.map(p => p.y)) + CANVAS_PAD + nh - 6;
+  const x0 = ps[0].x + CANVAS_PAD + NW + off, ym = (y1 + y2) / 2, r = Math.min(10, (y2 - y1) / 4);
+  const lines = group.label ? wrapMeasured(group.label, 110, lfs, font) : [];
+  const ty0 = ym - (lines.length * lineH) / 2 + lfs - 1;
+  return {
+    d: `M${x0},${y1}Q${x0+h},${y1} ${x0+h},${y1+r}L${x0+h},${ym-r}Q${x0+h},${ym} ${x0+w},${ym}Q${x0+h},${ym} ${x0+h},${ym+r}L${x0+h},${y2-r}Q${x0+h},${y2} ${x0},${y2}`,
+    lfs, anchor: 'start',
+    texts: lines.map((t, i) => ({ t, x: x0 + w + 6, y: ty0 + i * lineH })),
+    hit: { x: x0 - 2, y: y1, w: w + 12 + 112, h: y2 - y1 },
+  };
+};
+const groupSVG = (g, pos, nh, fs, orient) => {
+  const gg = groupGeom(g, pos, nh, fs, orient, EXPORT_FONT); if (!gg) return '';
+  return `<path d="${gg.d}" fill="none" stroke="${GROUP_COL}" stroke-width="1.6" stroke-linejoin="round"/>`
+    + gg.texts.map(o => `<text x="${o.x.toFixed(1)}" y="${o.y.toFixed(1)}" text-anchor="${gg.anchor}" font-size="${gg.lfs}" fill="#3a3428" font-family="${EXPORT_FONT}">${escXML(o.t)}</text>`).join('');
+};
+
 // ── SVG export (clean, no buttons)
-const buildExportSVG = (root, links, fs, zoom, orient = 'landscape') => {
+const buildExportSVG = (doc, fs, zoom, orient = 'landscape') => {
+  const { root, links, groups } = doc;
   if (!root) return null;
-  const pos = layoutFor(root, links, fs, orient);
+  const pos = layoutFor(doc, fs, orient);
   const nh = nodeH(fs);
-  const { w: nw, h: nh2 } = getTreeBounds(pos, fs, orient);
+  const { w: nw, h: nh2 } = mapBounds(doc, pos, fs, orient);
   const svgW = Math.round(nw * zoom), svgH = Math.round(nh2 * zoom);
   const edgeParts = [], nodeParts = [];
   const walk = (n) => {
@@ -353,6 +412,7 @@ const buildExportSVG = (root, links, fs, zoom, orient = 'landscape') => {
     const { d } = linkGeom(p, q, nh, orient);
     edgeParts.push(`<path d="${d}" fill="none" stroke="${LINK_COL}" stroke-width="1.6"${l.arrow ? ' marker-end="url(#linkhead)"' : ''}/>`);
   }
+  for (const g of groups) edgeParts.push(groupSVG(g, pos, nh, fs, orient));
   const labelParts = placeLabels(root, links, pos, fs, orient, EXPORT_FONT).map(o => o.edgeOf
     ? labelSVG(o.text, o.mid, fs, getNodeCol(o.edgeOf).border, getNodeCol(o.edgeOf).badge)
     : labelSVG(o.text, o.mid, fs, LINK_COL, '#3a3428'));
@@ -363,7 +423,8 @@ const buildExportSVG = (root, links, fs, zoom, orient = 'landscape') => {
 };
 
 // 木の線：問い --> / 答え -.->、関係線：矢印なし --- / 矢印あり ==>。線のラベルは -->|"ラベル"| の形
-const buildMermaid = (root, links, orient = 'landscape') => {
+// 波かっこは subgraph として書き出す（Mermaid上では枠で囲んだ表示になる）
+const buildMermaid = ({ root, links, groups }, orient = 'landscape') => {
   if (!root) return '';
   const dir = orient === 'portrait' ? 'TD' : 'LR';
   const esc = s => String(s).replace(/"/g,'#quot;').replace(/\\/g,'\\\\');
@@ -393,7 +454,10 @@ const buildMermaid = (root, links, orient = 'landscape') => {
     styleLines.push(`  linkStyle ${edgeLines.length} stroke:${LINK_COL},stroke-width:1.5px`);
     edgeLines.push(`  ${l.from} ${l.arrow ? '==>' : '---'}${lbl(l.label)} ${l.to}`);
   }
-  return ['```mermaid',`flowchart ${dir}`,...nodeLines,...edgeLines,...styleLines,'```'].join('\n');
+  const groupLines = groups.filter(g => g.childIds.every(id => shown.has(id))).flatMap((g, i) => [
+    `  subgraph grp${i + 1}["${esc(g.label || ' ')}"]`, ...g.childIds.map(id => `    ${id}`), '  end',
+  ]);
+  return ['```mermaid',`flowchart ${dir}`,...nodeLines,...edgeLines,...groupLines,...styleLines,'```'].join('\n');
 };
 
 const downloadBlob = (blob, filename) => {
@@ -415,11 +479,17 @@ const parseMermaid = (text) => {
   const edgeRe  = /^(n\d+)\s+(-->|-\.->|---|==>)(?:\|"(.*)"\|)?\s+(n\d+)$/;
   const decode  = s => s.replace(/#quot;/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
 
-  const rawNodes = new Map();
-  const edges    = [];
-  const rawLinks = [];
+  const rawNodes  = new Map();
+  const edges     = [];
+  const rawLinks  = [];
+  const rawGroups = [];
+  let curGroup = null;
 
   for (const line of lines) {
+    const gm = line.match(/^subgraph\s+\S+?\["(.*)"\]$/);
+    if (gm) { curGroup = { label: decode(gm[1]).trim(), members: [] }; rawGroups.push(curGroup); continue; }
+    if (line === 'end') { curGroup = null; continue; }
+    if (curGroup && /^n\d+$/.test(line)) { curGroup.members.push(line); continue; }
     const qm = line.match(qNodeRe);
     if (qm) { rawNodes.set(qm[1], { nodeType: 'question', label: qm[2] }); continue; }
     const am = line.match(aNodeRe);
@@ -473,15 +543,26 @@ const parseMermaid = (text) => {
   const links = rawLinks
     .filter(l => idMap.has(l.from) && idMap.has(l.to))
     .map(l => ({ id: uid(), from: idMap.get(l.from), to: idMap.get(l.to), label: l.label, arrow: l.arrow }));
-  return { root, links };
+  // 波かっこ：同じ親の子に限り、その親の子の並び順で連続した範囲に整える
+  const groups = [];
+  for (const rg of rawGroups) {
+    const ids = rg.members.map(id => idMap.get(id)).filter(Boolean);
+    const parent = ids.length ? findParent(root, ids[0]) : null;
+    if (!parent) continue;
+    const idx = parent.children.map((c, i) => ids.includes(c.id) ? i : -1).filter(i => i >= 0);
+    if (!idx.length) continue;
+    groups.push({ id: uid(), parentId: parent.id, label: rg.label,
+      childIds: parent.children.slice(Math.min(...idx), Math.max(...idx) + 1).map(c => c.id) });
+  }
+  return { root, links, groups };
 };
 
 // ── Interactive node
-function NodeBox({ node, pos, fs, selId, addingToId, onSelect, onOpenAdd, onCollapse, onDelete }) {
+function NodeBox({ node, pos, fs, selId, addingToId, markedIds, onSelect, onOpenAdd, onCollapse, onDelete }) {
   const p = pos.get(node.id); if (!p) return null;
   const nh = nodeH(fs);
   const col = getNodeCol(node);
-  const isSel = node.id === selId;
+  const isSel = node.id === selId || !!markedIds?.includes(node.id);
   const isAdding = node.id === addingToId;
   const isAnswer = node.nodeType === 'answer';
   const btnSz = Math.round(fs * 1.45 + 3);
@@ -584,6 +665,23 @@ function LinkLine({ link, pos, fs, orient, selected }) {
   );
 }
 
+// ── 波かっこ（クリックで編集）
+function GroupBrace({ group, pos, fs, orient, selected, onClick }) {
+  const gg = groupGeom(group, pos, nodeH(fs), fs, orient, DISPLAY_FONT);
+  if (!gg) return null;
+  const col = selected ? '#1677ff' : GROUP_COL;
+  return (
+    <g style={{ cursor:'pointer' }} onClick={onClick}>
+      <rect x={gg.hit.x} y={gg.hit.y} width={gg.hit.w} height={gg.hit.h} fill="transparent"/>
+      <path d={gg.d} fill="none" stroke={col} strokeWidth={selected ? 2.4 : 1.6} strokeLinejoin="round"/>
+      {gg.texts.map((o, i) => (
+        <text key={i} x={o.x} y={o.y} textAnchor={gg.anchor} fontSize={gg.lfs} fill={selected ? '#0050b3' : '#3a3428'}
+          fontFamily={DISPLAY_FONT} style={{ pointerEvents:'none', userSelect:'none' }}>{o.t}</text>
+      ))}
+    </g>
+  );
+}
+
 // ── 線に添えるラベル（クリックできるものは onClick を渡す）
 function LineLabel({ text, mid, fs, stroke, color, onClick }) {
   const { t, lfs, w, h } = labelBox(text, fs, DISPLAY_FONT);
@@ -596,9 +694,10 @@ function LineLabel({ text, mid, fs, stroke, color, onClick }) {
   );
 }
 
-function MindMap({ root, links, selId, addingToId, selLinkId, fs, zoom, orient, picking, onSelect, onOpenAdd, onCollapse, onDelete, onSelectLink }) {
-  const pos = layoutFor(root, links, fs, orient);
-  const { w: nw, h: nh2 } = root ? getTreeBounds(pos, fs, orient) : { w:700, h:500 };
+function MindMap({ doc, selId, addingToId, markedIds, selLinkId, selGroupId, fs, zoom, orient, picking, onSelect, onOpenAdd, onCollapse, onDelete, onSelectLink, onSelectGroup }) {
+  const { root, links, groups } = doc;
+  const pos = layoutFor(doc, fs, orient);
+  const { w: nw, h: nh2 } = root ? mapBounds(doc, pos, fs, orient) : { w:700, h:500 };
   const svgW = Math.round(nw*zoom), svgH = Math.round(nh2*zoom);
   const edges=[], nodes=[];
   const walk = (n) => {
@@ -642,8 +741,10 @@ function MindMap({ root, links, selId, addingToId, selLinkId, fs, zoom, orient, 
       <g transform={`scale(${zoom})`}>
         {edges.map((e,i) => <Edge key={i} parent={e.parent} child={e.child} pos={pos} fs={fs} orient={orient}/>)}
         {links.map(l => <LinkLine key={l.id} link={l} pos={pos} fs={fs} orient={orient} selected={l.id === selLinkId}/>)}
+        {groups.map(g => <GroupBrace key={g.id} group={g} pos={pos} fs={fs} orient={orient}
+          selected={g.id === selGroupId} onClick={e => { e.stopPropagation(); onSelectGroup(g.id); }}/>)}
         {nodes.map(n => <NodeBox key={n.id} node={n} pos={pos} fs={fs}
-          selId={selId} addingToId={addingToId}
+          selId={selId} addingToId={addingToId} markedIds={markedIds}
           onSelect={onSelect} onOpenAdd={onOpenAdd} onCollapse={onCollapse} onDelete={onDelete}/>)}
         {labels}
       </g>
@@ -726,6 +827,21 @@ function ManualModal({ onClose }) {
             また、ノードの<strong>「編集」</strong>で<strong>「親からの線のラベル」</strong>を入れると、親から伸びる矢印・点線にもラベルを付けられます(例：「起きているとして……」)。
           </p>
 
+          <p style={h2}>波かっこでまとめる</p>
+          <p style={p}>
+            同じ親から出ている子ノードのうち、並んでいる何個かを<strong>波かっこ(｝)</strong>でまとめて、「他にもありそう」「調べる」などのラベルを付けられます。
+            横向きではノードの右側、縦向きではノードの下側に表示されます。
+          </p>
+          <ol style={{ ...p, paddingLeft:'18px' }}>
+            <li>親ノードをクリックして選び、左パネルの<strong>「＋ 子ノードをまとめる」</strong>を押す</li>
+            <li>まとめたい子ノードを、左パネルの一覧かマップ上でクリック(間を飛ばさず、続いた範囲にかかります。範囲の端をもう一度クリックすると外れます)</li>
+            <li>ラベル(なくてもOK)を入れて<strong>「まとめる」</strong></li>
+          </ol>
+          <p style={p}>
+            作った波かっこは、親ノードの「波かっこ」の一覧、またはマップ上の波かっこをクリックして編集・削除できます。
+            1つの子ノードは1つの波かっこにしか入れられません。
+          </p>
+
           <p style={h2}>表示設定</p>
           <p style={p}>
             マップ作成中は左パネル上部で、<strong>文字サイズ</strong>(10〜18px)、
@@ -736,7 +852,7 @@ function ManualModal({ onClose }) {
           <p style={h2}>書き出し・読み込み</p>
           <p style={p}>
             <strong>PNG</strong>：現在のマップ全体を画像として保存します(ダウンロードフォルダに billiard_map.png として保存されます)。<br/>
-            <strong>Mermaid</strong>：マップ構造をMermaid記法のテキストとして保存します(ダウンロードフォルダに billiard_map.md として保存されます)。関係線と線のラベルも含まれます。<br/>
+            <strong>Mermaid</strong>：マップ構造をMermaid記法のテキストとして保存します(ダウンロードフォルダに billiard_map.md として保存されます)。関係線・線のラベル・波かっこも含まれます(Mermaid上では、波かっこは枠囲みとして表示されます)。<br/>
             <strong>「Mermaidを読み込む」</strong>：<u>ハスラーくんで書き出したMermaidファイル(.md/.txt)専用</u>です。
             他のツールで書いた一般的なMermaid図は、ノードや矢印の記法が異なるため読み込めません。<br/>
             <strong>リセット</strong>：マップを消去して最初の入力画面に戻ります(確認のあとで実行されます。<u>自動保存した内容も消え、元に戻すこともできません</u>)。
@@ -770,8 +886,8 @@ function ManualModal({ onClose }) {
 export default function App() {
   const [phase, setPhase]         = useState(SAVED ? 'mapping' : 'input');
   const [input, setInput]         = useState('');
-  const [doc, setDoc]             = useState(SAVED ? { root: SAVED.root, links: SAVED.links } : EMPTY_DOC);
-  const { root, links } = doc;
+  const [doc, setDoc]             = useState(SAVED ? { root: SAVED.root, links: SAVED.links, groups: SAVED.groups } : EMPTY_DOC);
+  const { root, links, groups } = doc;
   const [selId, setSelId]         = useState(null);
   const [addingToId, setAddingToId] = useState(null);
   const [selCat, setSelCat]       = useState(null);
@@ -787,13 +903,13 @@ export default function App() {
 
   // マップ・履歴・表示設定が変わるたびに自動保存（root が null ＝リセット後は保存データも消す）
   useEffect(() => {
-    writeSaved(root ? { root, links, past: hist.past, future: hist.future, fontSize, zoom, orient } : null);
-  }, [root, links, hist, fontSize, zoom, orient]);
+    writeSaved(root ? { root, links, groups, past: hist.past, future: hist.future, fontSize, zoom, orient } : null);
+  }, [root, links, groups, hist, fontSize, zoom, orient]);
 
   // マップを変更するときは必ずここを通す（変更前の状態を履歴に積む）
   const commit = (next) => {
     if (root) setHist(h => ({ past: [...h.past.slice(-(HISTORY_MAX - 1)), doc], future: [] }));
-    setDoc(pruneLinks(next));
+    setDoc(pruneDoc(next));
   };
   const commitRoot = (nextRoot) => commit({ ...doc, root: nextRoot });
   const clearHistory = () => setHist({ past: [], future: [] });
@@ -805,6 +921,8 @@ export default function App() {
   // ── 関係線の作成・編集中の状態
   //   { from, to, label, arrow, editId, err }  to が null の間は「相手ノードをクリックで選ぶ」段階
   const [linkDraft, setLinkDraft] = useState(null);
+  // ── 波かっこの作成・編集中の状態 { parentId, childIds, label, editId, err }
+  const [groupDraft, setGroupDraft] = useState(null);
 
   const handleImport = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -816,7 +934,7 @@ export default function App() {
       // マップ作成中の読み込みは「元に戻す」で読み込み前に戻せる。入力画面からの読み込みは新しい履歴の始まり
       if (root) commit(parsed); else { clearHistory(); setDoc(parsed); }
       setPhase('mapping'); setSelId(null);
-      setAddingToId(null); setSelCat(null); setInputText(''); setLinkDraft(null);
+      setAddingToId(null); setSelCat(null); setInputText(''); setLinkDraft(null); setGroupDraft(null);
       setImportErr(null);
     };
     reader.readAsText(file);
@@ -828,10 +946,11 @@ export default function App() {
   const selNode = selId ? findNode(root, selId) : null;
   const addingNode = addingToId ? findNode(root, addingToId) : null;
   const selLinks = selId ? links.filter(l => l.from === selId || l.to === selId) : [];
+  const selGroups = selId ? groups.filter(g => g.parentId === selId) : [];
 
   const handleStart = () => {
     if (!input.trim()) return;
-    clearHistory(); setDoc({ root: mkNode(input.trim()), links: [] }); setPhase('mapping');
+    clearHistory(); setDoc({ ...EMPTY_DOC, root: mkNode(input.trim()) }); setPhase('mapping');
   };
 
   // 関係線：相手ノードを選ぶ。同じノード・親子・既存の関係線はつながない
@@ -846,13 +965,14 @@ export default function App() {
   };
   const handleSelect = (id) => {
     if (linkDraft && !linkDraft.to) { pickLinkTarget(id); return; }
-    setLinkDraft(null);
+    if (groupDraft && findNode(root, groupDraft.parentId)?.children.some(c => c.id === id)) { toggleGroupChild(id); return; }
+    setLinkDraft(null); setGroupDraft(null);
     setSelId(id);
     if (addingToId !== id) { setAddingToId(null); setSelCat(null); setInputText(''); setNewNodeType('question'); }
   };
   // [+] → 常に追加パネルを開く
   const handleOpenAdd = (id) => {
-    setLinkDraft(null);
+    setLinkDraft(null); setGroupDraft(null);
     setAddingToId(id); setSelId(id); setSelCat(null); setInputText(''); setNewNodeType('question');
   };
   // [▼/▶] → 折りたたみトグル
@@ -864,6 +984,7 @@ export default function App() {
     if (selId === id) setSelId(null);
     if (addingToId === id) { setAddingToId(null); setSelCat(null); setInputText(''); }
     if (linkDraft && (linkDraft.from === id || linkDraft.to === id)) setLinkDraft(null);
+    if (groupDraft) setGroupDraft(null);
   };
   const handleToggleType = (id) => commitRoot(toggleNodeType(root, id));
 
@@ -898,12 +1019,14 @@ export default function App() {
 
   // ── 関係線の操作
   const handleStartLink = (fromId) => {
+    setGroupDraft(null);
     setAddingToId(null); setSelCat(null); setInputText('');
     setEditingId(null);
     setLinkDraft({ from: fromId, to: null, label: '', arrow: false, editId: null, err: null });
   };
   const handleEditLink = (id) => {
     const l = links.find(x => x.id === id); if (!l) return;
+    setGroupDraft(null);
     setAddingToId(null); setSelCat(null); setInputText('');
     setEditingId(null);
     setLinkDraft({ from: l.from, to: l.to, label: l.label ?? '', arrow: !!l.arrow, editId: id, err: null });
@@ -922,6 +1045,50 @@ export default function App() {
     if (linkDraft?.editId === id) setLinkDraft(null);
   };
 
+  // ── 波かっこの操作（同じ親の子ノードの、連続した範囲だけをまとめる）
+  const handleStartGroup = (parentId) => {
+    setLinkDraft(null); setAddingToId(null); setSelCat(null); setInputText(''); setEditingId(null);
+    setGroupDraft({ parentId, childIds: [], label: '', editId: null, err: null });
+  };
+  const handleEditGroup = (id) => {
+    const g = groups.find(x => x.id === id); if (!g) return;
+    setLinkDraft(null); setAddingToId(null); setSelCat(null); setInputText(''); setEditingId(null);
+    setSelId(g.parentId);
+    setGroupDraft({ parentId: g.parentId, childIds: g.childIds, label: g.label ?? '', editId: id, err: null });
+  };
+  // 子をクリック：範囲の外なら範囲を広げ、範囲の端なら外す。まん中だけは外せない
+  const toggleGroupChild = (childId) => {
+    setGroupDraft(d => {
+      const kids = findNode(root, d.parentId)?.children.map(c => c.id) ?? [];
+      const idx = kids.indexOf(childId); if (idx < 0) return d;
+      const cur = d.childIds.map(id => kids.indexOf(id)).filter(i => i >= 0);
+      let lo = cur.length ? Math.min(...cur) : idx, hi = cur.length ? Math.max(...cur) : idx;
+      if (!cur.length || idx < lo || idx > hi) { lo = Math.min(lo, idx); hi = Math.max(hi, idx); }
+      else if (lo === hi) return { ...d, childIds: [], err: null };
+      else if (idx === lo) lo++;
+      else if (idx === hi) hi--;
+      else return { ...d, err: 'まん中のノードだけを外すことはできません。波かっこは、上から下まで（縦向きなら左から右まで）続いた範囲にかかります。' };
+      const next = kids.slice(lo, hi + 1);
+      const taken = groups.filter(g => g.id !== d.editId).flatMap(g => g.childIds);
+      if (next.some(id => taken.includes(id)))
+        return { ...d, err: '別の波かっこでまとめているノードと重なってしまいます。範囲を選び直してください。' };
+      return { ...d, childIds: next, err: null };
+    });
+  };
+  const handleSaveGroup = () => {
+    if (!groupDraft?.childIds.length) return;
+    const { parentId, childIds, editId } = groupDraft;
+    const label = groupDraft.label.trim();
+    commit({ ...doc, groups: editId
+      ? groups.map(g => g.id === editId ? { ...g, childIds, label } : g)
+      : [...groups, { id: uid(), parentId, childIds, label }] });
+    setGroupDraft(null);
+  };
+  const handleDeleteGroup = (id) => {
+    commit({ ...doc, groups: groups.filter(g => g.id !== id) });
+    if (groupDraft?.editId === id) setGroupDraft(null);
+  };
+
   const travel = (from) => {
     if (!hist[from].length) return;
     const target = from === 'past' ? hist.past[hist.past.length - 1] : hist.future[0];
@@ -933,7 +1100,7 @@ export default function App() {
     if (!findNode(target.root, selId)) setSelId(null);
     if (!findNode(target.root, addingToId)) { setAddingToId(null); setSelCat(null); setInputText(''); }
     setEditingId(null); setEditText(''); setEditCat(null); setEditEdgeLabel('');
-    setLinkDraft(null);
+    setLinkDraft(null); setGroupDraft(null);
   };
   const handleUndo = () => travel('past');
   const handleRedo = () => travel('future');
@@ -942,7 +1109,7 @@ export default function App() {
   // Esc で関係線の作成・編集をやめる
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape' && linkDraft && !manualOpen) { setLinkDraft(null); return; }
+      if (e.key === 'Escape' && (linkDraft || groupDraft) && !manualOpen) { setLinkDraft(null); setGroupDraft(null); return; }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       if (e.target.closest?.('textarea, input')) return;
       const k = e.key.toLowerCase();
@@ -970,7 +1137,7 @@ export default function App() {
   const handleCancelAdd = () => { setAddingToId(null); setSelCat(null); setInputText(''); setNewNodeType('question'); };
 
   const doExportPNG = () => {
-    const built = buildExportSVG(root, links, fontSize, zoom, orient); if (!built) return;
+    const built = buildExportSVG(doc, fontSize, zoom, orient); if (!built) return;
     const { svg: str, width: W, height: H } = built;
     setExporting('png');
     setTimeout(() => {
@@ -991,7 +1158,7 @@ export default function App() {
     },60);
   };
   const doExportMermaid = () => {
-    const str = buildMermaid(root, links, orient); if (!str) return;
+    const str = buildMermaid(doc, orient); if (!str) return;
     setExporting('md');
     downloadBlob(new Blob([str],{type:'text/markdown;charset=utf-8'}),'billiard_map.md');
     setTimeout(()=>setExporting(null),400);
@@ -1242,8 +1409,67 @@ export default function App() {
             </div>
           </div>
 
+        ) : groupDraft ? (
+          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+            <div style={{ flex:1, overflowY:'auto', padding:'11px 13px' }}>
+              <p style={{ fontSize:'9.5px', color:'#a89878', fontFamily:'monospace', margin:'0 0 8px', letterSpacing:'0.1em' }}>
+                {groupDraft.editId ? '波かっこを編集' : '子ノードを波かっこでまとめる'}
+              </p>
+              <p style={{ fontSize:'10px', color:'#7a7060', margin:'0 0 3px', fontWeight:'600' }}>親ノード</p>
+              <div style={{ padding:'7px 10px', borderRadius:'6px', fontSize:'11.5px', lineHeight:1.6, background:'#fff', border:bdr, color:'#1a1208', marginBottom:'10px' }}>
+                {findNode(root, groupDraft.parentId)?.text}
+              </div>
+              <p style={{ fontSize:'10px', color:'#7a7060', margin:'0 0 3px', fontWeight:'600' }}>まとめる子ノード</p>
+              <p style={{ fontSize:'10px', color:'#a89878', margin:'0 0 6px', lineHeight:1.6 }}>
+                ここかマップ上でクリックして選びます。間を飛ばさず、続いた範囲にかかります。
+              </p>
+              <div style={{ display:'flex', flexDirection:'column', gap:'3px' }}>
+                {(findNode(root, groupDraft.parentId)?.children ?? []).map(c => {
+                  const on = groupDraft.childIds.includes(c.id);
+                  const other = groups.some(g => g.id !== groupDraft.editId && g.childIds.includes(c.id));
+                  return (
+                    <button key={c.id} onClick={()=>toggleGroupChild(c.id)}
+                      style={{ display:'flex', alignItems:'center', gap:'6px', textAlign:'left', padding:'5px 8px', borderRadius:'5px', cursor:'pointer', fontFamily:'inherit',
+                        background: on ? '#1a1208' : '#fff', color: on ? '#fff' : other ? '#b0a890' : '#1a1208',
+                        border: on ? '1px solid #1a1208' : bdr, fontSize:'11px', lineHeight:1.5 }}>
+                      <span style={{ flexShrink:0 }}>{on ? '☑' : '☐'}</span>
+                      <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.text}</span>
+                      {other && <span style={{ flexShrink:0, fontSize:'9.5px' }}>別の波かっこ</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {groupDraft.err && <p style={{ fontSize:'10.5px', color:'#c41a1a', margin:'8px 0 0', lineHeight:1.6 }}>{groupDraft.err}</p>}
+
+              <p style={{ fontSize:'10px', color:'#7a7060', margin:'14px 0 5px', fontWeight:'600' }}>波かっこのラベル（なくてもOK）</p>
+              <input value={groupDraft.label} maxLength={40}
+                onChange={e=>setGroupDraft(d => ({ ...d, label: e.target.value }))}
+                onKeyDown={e=>e.key==='Enter'&&!e.nativeEvent.isComposing&&handleSaveGroup()}
+                placeholder="例：他にもありそう、調べる"
+                style={{ background:'#fff', border:bdr, borderRadius:'6px', padding:'7px 10px', color:'#1a1208', fontSize:'12px', width:'100%', outline:'none', boxSizing:'border-box', fontFamily:'inherit', marginBottom:'12px' }}/>
+              <button onClick={handleSaveGroup} disabled={!groupDraft.childIds.length}
+                style={{ width:'100%', background: groupDraft.childIds.length ? '#1a1208' : '#e0dbd0', color: groupDraft.childIds.length ? '#fff' : '#a89878', border:'none', borderRadius:'7px', padding:'9px', fontSize:'12px', cursor: groupDraft.childIds.length ? 'pointer' : 'not-allowed', fontWeight:'700', fontFamily:'inherit', marginBottom:'6px' }}>
+                {groupDraft.editId ? '保存する' : 'まとめる'}
+              </button>
+              {groupDraft.editId && (
+                <button onClick={()=>handleDeleteGroup(groupDraft.editId)}
+                  style={{ width:'100%', background:'#fff', color:'#c41a1a', border:'1px solid #f0c0c0', borderRadius:'7px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit' }}>
+                  この波かっこを削除
+                </button>
+              )}
+            </div>
+
+            <div style={{ padding:'10px 13px', borderTop:bdr, background:'#faf9f5' }}>
+              <button onClick={()=>setGroupDraft(null)}
+                style={{ width:'100%', background:'#fff', color:'#7a7060', border:bdr, borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit' }}>
+                やめる（Esc）
+              </button>
+            </div>
+          </div>
+
         ) : (
           <>
+            <div style={{ flex:1, overflowY:'auto', minHeight:0 }}>
             {selNode && (
               <div style={{ padding:'11px 15px', borderBottom:bdr, background:'#fff' }}>
                 <p style={{ fontSize:'9.5px', color:'#a89878', fontFamily:'monospace', margin:'0 0 5px', letterSpacing:'0.1em' }}>選択中のノード</p>
@@ -1367,11 +1593,38 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                    {selNode.children.length > 0 && (
+                      <div style={{ marginTop:'9px', paddingTop:'8px', borderTop:'1px dashed #e0dbd0' }}>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'6px', marginBottom:'5px' }}>
+                          <span style={{ fontSize:'10px', color:'#7a7060', fontWeight:'600', whiteSpace:'nowrap' }}>波かっこ{selGroups.length ? `（${selGroups.length}）` : ''}</span>
+                          <button onClick={()=>handleStartGroup(selId)}
+                            style={{ fontSize:'10px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'5px', background:'#e6f4ff', cursor:'pointer', padding:'2px 8px', fontFamily:'inherit', whiteSpace:'nowrap' }}>
+                            ＋ 子ノードをまとめる
+                          </button>
+                        </div>
+                        {selGroups.map(g => (
+                          <div key={g.id} style={{ display:'flex', alignItems:'center', gap:'5px', padding:'4px 6px', marginBottom:'4px', background:'#faf9f5', border:bdr, borderRadius:'5px', fontSize:'10.5px' }}>
+                            <span style={{ color:'#7a7060', flexShrink:0 }}>｝</span>
+                            <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'#1a1208' }}>
+                              {g.label || '（ラベルなし）'}<span style={{ color:'#a89878' }}>・{g.childIds.length}個</span>
+                            </span>
+                            <button onClick={()=>handleEditGroup(g.id)}
+                              style={{ flexShrink:0, fontSize:'9.5px', color:'#1677ff', border:'1px solid #91caff', borderRadius:'4px', background:'#e6f4ff', cursor:'pointer', padding:'1px 5px', fontFamily:'inherit' }}>
+                              編集
+                            </button>
+                            <button onClick={()=>handleDeleteGroup(g.id)} title="この波かっこを削除"
+                              style={{ flexShrink:0, fontSize:'10px', color:'#999', border:'1px solid #ddd', borderRadius:'4px', background:'#fff', cursor:'pointer', padding:'0 5px', fontFamily:'inherit' }}>
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
             )}
-            <div style={{ flex:1, overflowY:'auto', padding:'14px 16px' }}>
+            <div style={{ padding:'14px 16px' }}>
               <div style={{ padding:'12px 14px', background:'#fffcf0', border:'1px solid #e8d070', borderRadius:'7px', fontSize:'11px', color:'#5a4810', lineHeight:2.1 }}>
                 <strong style={{ color:'#8a6800', display:'block', marginBottom:'4px' }}>操作方法</strong>
                 <span style={{ color:'#888' }}>[+]</span> 子ノードを追加<br/>
@@ -1380,12 +1633,14 @@ export default function App() {
                 <span style={{ color:'#888' }}>切り替え</span> 問い↔答えを変更<br/>
                 <span style={{ color:'#888' }}>元に戻す</span> 直前の操作を取消<br/>
                 <span style={{ color:'#888' }}>関係線</span> ノードを選んで「＋関係線を引く」<br/>
+                <span style={{ color:'#888' }}>波かっこ</span> 親を選んで「＋子ノードをまとめる」<br/>
                 <span style={{ display:'block', marginTop:'6px', paddingTop:'6px', borderTop:'1px solid #e8d070' }}>
                   <span style={{ color:'#888' }}>編集</span> テキストを修正<br/>
                   　問いノードは種類も変更可<br/>
                   　Ctrl+Enter で確定
                 </span>
               </div>
+            </div>
             </div>
             <div style={{ padding:'10px 13px', borderTop:bdr, background:'#faf9f5' }}>
               <p style={{ fontSize:'9.5px', color:'#a89878', margin:'0 0 6px', fontFamily:'monospace', letterSpacing:'0.1em' }}>書き出し・読み込み</p>
@@ -1406,7 +1661,7 @@ export default function App() {
                     マップを消去して最初に戻します。自動保存した内容も消え、元に戻せません。よろしいですか？
                   </p>
                   <div style={{ display:'flex', gap:'5px' }}>
-                    <button onClick={()=>{ setPhase('input'); setDoc(EMPTY_DOC); clearHistory(); setLinkDraft(null); setSelId(null); setAddingToId(null); setSelCat(null); setInputText(''); setZoom(1.0); setConfirmReset(false); }}
+                    <button onClick={()=>{ setPhase('input'); setDoc(EMPTY_DOC); clearHistory(); setLinkDraft(null); setGroupDraft(null); setSelId(null); setAddingToId(null); setSelCat(null); setInputText(''); setZoom(1.0); setConfirmReset(false); }}
                       style={{ flex:1, background:'#c41a1a', color:'#fff', border:'none', borderRadius:'6px', padding:'7px', fontSize:'11px', cursor:'pointer', fontFamily:'inherit', fontWeight:'700' }}>
                       リセットする
                     </button>
@@ -1428,8 +1683,9 @@ export default function App() {
       </div>
 
       <div style={{ flex:1, overflow:'auto' }}>
-        <MindMap root={root} links={links} selId={linkDraft?.to ?? selId} addingToId={addingToId ?? linkDraft?.from}
-          selLinkId={linkDraft?.editId} picking={!!linkDraft && !linkDraft.to} onSelectLink={handleEditLink}
+        <MindMap doc={doc} selId={linkDraft?.to ?? selId} addingToId={addingToId ?? linkDraft?.from ?? groupDraft?.parentId}
+          markedIds={groupDraft?.childIds} selLinkId={linkDraft?.editId} selGroupId={groupDraft?.editId}
+          picking={!!linkDraft && !linkDraft.to} onSelectLink={handleEditLink} onSelectGroup={handleEditGroup}
           fs={fontSize} zoom={zoom} orient={orient}
           onSelect={handleSelect} onOpenAdd={handleOpenAdd} onCollapse={handleCollapse} onDelete={handleDelete}/>
       </div>
@@ -1463,7 +1719,8 @@ export default function App() {
               <span style={{ color:'#8a6800', marginTop:'6px', display:'block', borderTop:'1px solid #e8d070', paddingTop:'6px' }}>
                 問い→問い：矢印（→）<br/>
                 問い→答え：点線（……）<br/>
-                その他の関係：灰色の線（―）
+                その他の関係：灰色の線（―）<br/>
+                子のまとまり：波かっこ（｝）
               </span>
             </div>
             <div style={{ padding:'11px 13px', background:'#f0f5ff', border:'1px solid #adc6ff', borderRadius:'7px', fontSize:'11px', color:'#1d39c4', lineHeight:1.9 }}>
